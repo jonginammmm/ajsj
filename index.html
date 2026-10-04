@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interactive Dreamwave Galaxy 360°</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #05020a;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    #canvas-container {
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
+    }
+    .ui-overlay {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      text-align: center;
+      color: #ffffff;
+      pointer-events: none;
+      user-select: none;
+    }
+    .ui-overlay h1 {
+      font-size: 2.2rem;
+      font-weight: 800;
+      letter-spacing: 1px;
+      margin-bottom: 5px;
+      text-shadow: 0 0 15px rgba(168, 85, 247, 0.6);
+    }
+    .ui-overlay span {
+      color: #84cc16;
+    }
+    .ui-overlay p {
+      font-size: 0.9rem;
+      opacity: 0.8;
+      margin-top: 4px;
+    }
+  </style>
+
+  <!-- Three.js va OrbitControls -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+
+  <div class="ui-overlay">
+    <h1>Interactive <span>Dreamwave</span> Galaxy</h1>
+    <p>360° aylantirish va yaqinlashtirish (Zoom) imkoniyati bilan</p>
+  </div>
+
+  <div id="canvas-container"></div>
+
+  <script>
+    // --- SCENE, CAMERA, RENDERER SETUP ---
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    const universe = new THREE.Group();
+    scene.add(universe);
+
+    const camera = new THREE.PerspectiveCamera(
+      60,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      3000
+    );
+    camera.position.set(0, 0, 400);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    container.appendChild(renderer.domElement);
+
+    // --- ORBIT CONTROLS (360° VRASTSENIE I ZOOM) ---
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true; // Plavnoye zamedleniye
+    controls.dampingFactor = 0.05;
+    controls.rotateSpeed = 0.8;
+    controls.zoomSpeed = 1.2;
+    controls.minDistance = 20;   // Maksimal yaqinlashtirish
+    controls.maxDistance = 1200; // Maksimal uzoqlashtirish
+
+    // --- NEBULA BACKGROUND SHADER ---
+    const bgVertexShader = `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `;
+
+    const bgFragmentShader = `
+      uniform float uTime;
+      varying vec2 vUv;
+
+      void main() {
+        vec2 uv = vUv;
+        
+        vec3 col1 = vec3(0.03, 0.01, 0.08);
+        vec3 col2 = vec3(0.18, 0.04, 0.28);
+        vec3 col3 = vec3(0.35, 0.08, 0.32);
+        
+        float dist = length(uv - vec2(0.5));
+        float wave = sin(uv.x * 3.0 + uTime * 0.2) * cos(uv.y * 3.0 + uTime * 0.15) * 0.5 + 0.5;
+        
+        vec3 finalBg = mix(col1, col2, wave * (1.0 - dist));
+        finalBg = mix(finalBg, col3, (1.0 - dist) * 0.4);
+        
+        gl_FragColor = vec4(finalBg, 1.0);
+      }
+    `;
+
+    const bgGeometry = new THREE.SphereGeometry(1500, 32, 32);
+    const bgMaterial = new THREE.ShaderMaterial({
+      vertexShader: bgVertexShader,
+      fragmentShader: bgFragmentShader,
+      uniforms: { uTime: { value: 0 } },
+      side: THREE.BackSide,
+      depthWrite: false
+    });
+
+    const nebulaMesh = new THREE.Mesh(bgGeometry, bgMaterial);
+    scene.add(nebulaMesh);
+
+    // --- STAR PARTICLES SHADER ---
+    const starVertexShader = `
+      attribute float aSize;
+      attribute vec3 aColor;
+      attribute float aPhase;
+      attribute float aTwinkleSpeed;
+
+      uniform float uTime;
+
+      varying vec3 vColor;
+      varying float vAlpha;
+
+      void main() {
+        vColor = aColor;
+        
+        float twinkle = sin(uTime * aTwinkleSpeed + aPhase) * 0.5 + 0.5;
+        vAlpha = 0.3 + twinkle * 0.7;
+
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = (aSize * (0.8 + twinkle * 0.6)) * (300.0 / -mvPosition.z);
+        gl_Position = projectionMatrix * mvPosition;
+      }
+    `;
+
+    const starFragmentShader = `
+      varying vec3 vColor;
+      varying float vAlpha;
+
+      void main() {
+        float dist = length(gl_PointCoord - vec2(0.5));
+        if (dist > 0.5) discard;
+        
+        float glow = 1.0 - smoothstep(0.0, 0.5, dist);
+        glow = pow(glow, 1.5);
+
+        gl_FragColor = vec4(vColor, vAlpha * glow);
+      }
+    `;
+
+    // --- CREATE 65,000 PARTICLES ---
+    const particleCount = 65000;
+    const starGeometry = new THREE.BufferGeometry();
+
+    const positions = new Float32Array(particleCount * 3);
+    const colors = new Float32Array(particleCount * 3);
+    const sizes = new Float32Array(particleCount);
+    const phases = new Float32Array(particleCount);
+    const twinkleSpeeds = new Float32Array(particleCount);
+
+    const colorPalette = [
+      new THREE.Color(0x8b5cf6),
+      new THREE.Color(0xec4899),
+      new THREE.Color(0x3b82f6),
+      new THREE.Color(0x10b981),
+      new THREE.Color(0xf59e0b),
+      new THREE.Color(0xffffff)
+    ];
+
+    for (let i = 0; i < particleCount; i++) {
+      const radius = 100 + Math.random() * 700;
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos((Math.random() * 2) - 1);
+
+      positions[i * 3]     = radius * Math.sin(phi) * Math.cos(theta);
+      positions[i * 3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
+      positions[i * 3 + 2] = radius * Math.cos(phi);
+
+      const baseColor = colorPalette[Math.floor(Math.random() * colorPalette.length)];
+      colors[i * 3]     = baseColor.r;
+      colors[i * 3 + 1] = baseColor.g;
+      colors[i * 3 + 2] = baseColor.b;
+
+      sizes[i] = Math.random() * 3.5 + 1.0;
+      phases[i] = Math.random() * Math.PI * 2;
+      twinkleSpeeds[i] = 1.0 + Math.random() * 4.0;
+    }
+
+    starGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    starGeometry.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
+    starGeometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+    starGeometry.setAttribute('aPhase', new THREE.BufferAttribute(phases, 1));
+    starGeometry.setAttribute('aTwinkleSpeed', new THREE.BufferAttribute(twinkleSpeeds, 1));
+
+    const starMaterial = new THREE.ShaderMaterial({
+      vertexShader: starVertexShader,
+      fragmentShader: starFragmentShader,
+      uniforms: { uTime: { value: 0 } },
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+
+    const starField = new THREE.Points(starGeometry, starMaterial);
+    universe.add(starField);
+
+    // --- ANIMATION LOOP ---
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const elapsedTime = clock.getElapsedTime();
+
+      // Obnovleniye shaderov
+      bgMaterial.uniforms.uTime.value = elapsedTime;
+      starMaterial.uniforms.uTime.value = elapsedTime;
+
+      // Medlennoye avto-vrasheniye galaktiki
+      universe.rotation.y = elapsedTime * 0.015;
+
+      // Obnovleniye OrbitControls
+      controls.update();
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    // --- RESIZE HANDLER ---
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+  </html>
